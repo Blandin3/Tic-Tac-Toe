@@ -10,12 +10,27 @@ public class ButtonClickEvent : MonoBehaviour
     public TextMeshProUGUI buttonText;
     private GameController gameController;
     private GameController1 computerController;
+    private int cellIndex;
+
+    public void SetCellIndex(int index)
+    {
+        cellIndex = index;
+    }
 
     public void SetSpace()
     {
-        buttonText.text = gameController.GetPlayerSide();
-        button.interactable = false;
-        gameController.EndTurn();
+        if (gameController != null)
+        {
+            gameController.RegisterMove(cellIndex);
+            buttonText.text = gameController.GetPlayerSide();
+            button.interactable = false;
+            gameController.PlayMoveSound();
+            gameController.EndTurn();
+        }
+        else if (computerController != null)
+        {
+            computerController.PlayerMove(cellIndex);
+        }
     }
 
     public void SetGameControllerReference(GameController controller)
@@ -30,8 +45,7 @@ public class ButtonClickEvent : MonoBehaviour
 
     public void SetComputerSpace()
     {
-        buttonText.text = computerController.GetPlayerSide();
-        button.interactable = false;
-        computerController.EndTurn();
+        // AI move is handled entirely inside GameController1.ComputerMoveWithDelay
+        // This method kept for compatibility but logic moved to controller
     }
 }

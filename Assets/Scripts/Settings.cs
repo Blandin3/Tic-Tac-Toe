@@ -14,19 +14,28 @@ public class Settings : MonoBehaviour
         aiDifficultySlider.minValue = 1;
         aiDifficultySlider.maxValue = 3;
         aiDifficultySlider.wholeNumbers = true;
+
+        // Remove listeners before setting values to avoid firing events during init
+        aiDifficultySlider.onValueChanged.RemoveAllListeners();
+        brightnessSlider.onValueChanged.RemoveAllListeners();
+        soundToggle.onValueChanged.RemoveAllListeners();
+
         aiDifficultySlider.value = GameSettings.AIDifficulty;
-
-        brightnessSlider.minValue = 0f;
-        brightnessSlider.maxValue = 1f;
         brightnessSlider.value = GameSettings.Brightness;
-
         soundToggle.isOn = GameSettings.SoundEnabled;
-
+        AudioListener.volume = GameSettings.SoundEnabled ? 1f : 0f;
         ApplyBrightness(GameSettings.Brightness);
 
+        // Add listeners after values are set
         aiDifficultySlider.onValueChanged.AddListener(v => GameSettings.AIDifficulty = Mathf.RoundToInt(v));
         brightnessSlider.onValueChanged.AddListener(v => { GameSettings.Brightness = v; ApplyBrightness(v); });
-        soundToggle.onValueChanged.AddListener(v => { GameSettings.SoundEnabled = v; AudioListener.volume = v ? 1f : 0f; });
+        soundToggle.onValueChanged.AddListener(OnSoundToggled);
+    }
+
+    void OnSoundToggled(bool isOn)
+    {
+        GameSettings.SoundEnabled = isOn;
+        AudioListener.volume = isOn ? 1f : 0f;
     }
 
     void ApplyBrightness(float value)
@@ -41,4 +50,5 @@ public class Settings : MonoBehaviour
     {
         SceneManager.LoadScene("HomeScreen");
     }
+
 }

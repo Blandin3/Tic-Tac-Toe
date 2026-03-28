@@ -1,256 +1,202 @@
 using System.Collections;
-using System.Collections.Generic;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 
 public class GameController1 : MonoBehaviour
 {
     public TextMeshProUGUI[] buttonList;
     public TextMeshProUGUI title;
-    private string playerSide;
-    private int moveCount;
     public GameObject restartButton;
-    private bool computerTurn = false;
     public GameObject[] strikeThroughs;
+    public AudioClip moveSound;
+    public AudioClip winSound;
+
+    private string[] cells = new string[9];
+    private string currentPlayer = "X";
+    private bool gameOver = false;
+    private IAIStrategy aiStrategy;
+    private AudioSource audioSource;
+
+    static readonly int[][] WinLines = new int[][]
+    {
+        new int[]{0,1,2}, new int[]{3,4,5}, new int[]{6,7,8},
+        new int[]{0,3,6}, new int[]{1,4,7}, new int[]{2,5,8},
+        new int[]{0,4,8}, new int[]{2,4,6}
+    };
 
     void Awake()
     {
+        audioSource = gameObject.AddComponent<AudioSource>();
+        aiStrategy = GetStrategy(GameSettings.AIDifficulty);
+        ResetCells();
         SetGameControllerReferenceOnButtons();
-        playerSide = "X";
-        title.text = "Player " + playerSide + " Turn";
-        moveCount = 0;
+        title.text = "Player X Turn";
         restartButton.SetActive(false);
         DisableAllStrikeThroughs();
+    }
+
+    IAIStrategy GetStrategy(int difficulty)
+    {
+        switch (difficulty)
+        {
+            case 1: return new EasyAIStrategy();
+            case 2: return new MediumAIStrategy();
+            default: return new HardAIStrategy();
+        }
+    }
+
+    void ResetCells()
+    {
+        for (int i = 0; i < 9; i++) cells[i] = "";
     }
 
     void SetGameControllerReferenceOnButtons()
     {
         for (int i = 0; i < buttonList.Length; i++)
         {
-            buttonList[i].GetComponentInParent<ButtonClickEvent>().SetComputerControllerReference(this);
+            ButtonClickEvent btn = buttonList[i].GetComponentInParent<ButtonClickEvent>();
+            btn.SetComputerControllerReference(this);
+            btn.SetCellIndex(i);
         }
     }
 
-    public string GetPlayerSide()
+    public string GetPlayerSide() => currentPlayer;
+
+    /// <summary>Called by ButtonClickEvent when player clicks a cell.</summary>
+    public void PlayerMove(int index)
     {
-        return playerSide;
-    }
+        if (gameOver || cells[index] != "") return;
 
-    public void EndTurn()
-    {
-        moveCount++;
-        int winningCombination = CheckWinCondition();
-        if (winningCombination != -1)
-        {
-            GameOver(winningCombination);
-            return;
-        }
+        // Register player move
+        cells[index] = "X";
+        buttonList[index].text = "X";
+        buttonList[index].GetComponentInParent<Button>().interactable = false;
+        PlaySound(moveSound);
 
-        if (moveCount >= 9)
-        {
-            title.text = "It is a Draw";
-            restartButton.SetActive(true);
-            return;
-        }
+        int winLine = GetWinningLine();
+        if (winLine != -1) { GameOver(winLine); return; }
+        if (IsDraw()) { ShowDraw(); return; }
 
-        ChangePlayer();
-
-        if (computerTurn && playerSide == "O")
-        {
-            StartCoroutine(ComputerMoveWithDelay());
-        }
-    }
-
-    void ChangePlayer()
-    {
-        playerSide = (playerSide == "X") ? "O" : "X";
-        title.text = "Player " + playerSide + " Turn";
-        computerTurn = (playerSide == "O"); 
+        currentPlayer = "O";
+        title.text = "Player O Turn";
+        StartCoroutine(ComputerMoveWithDelay());
     }
 
     IEnumerator ComputerMoveWithDelay()
     {
-        yield return new WaitForSeconds(1f); 
+        SetAllButtonsInteractable(false);
+        yield return new WaitForSeconds(1f);
 
-        int bestMove = GetBestMove();
-        buttonList[bestMove].GetComponentInParent<ButtonClickEvent>().SetComputerSpace();
-    }
+        string[] snapshot = (string[])cells.Clone();
+        int bestMove = aiStrategy.GetBestMove(snapshot);
 
-    int CheckWinCondition()
-    {
-        if (buttonList[0].text == playerSide && buttonList[1].text == playerSide && buttonList[2].text == playerSide)
-            return 0; // Top row
-        if (buttonList[3].text == playerSide && buttonList[4].text == playerSide && buttonList[5].text == playerSide)
-            return 1; // Middle row
-        if (buttonList[6].text == playerSide && buttonList[7].text == playerSide && buttonList[8].text == playerSide)
-            return 2; // Bottom row
-        if (buttonList[0].text == playerSide && buttonList[3].text == playerSide && buttonList[6].text == playerSide)
-            return 3; // Left column
-        if (buttonList[1].text == playerSide && buttonList[4].text == playerSide && buttonList[7].text == playerSide)
-            return 4; // Middle column
-        if (buttonList[2].text == playerSide && buttonList[5].text == playerSide && buttonList[8].text == playerSide)
-            return 5; // Right column
-        if (buttonList[0].text == playerSide && buttonList[4].text == playerSide && buttonList[8].text == playerSide)
-            return 6; // Diagonal top-left to bottom-right
-        if (buttonList[2].text == playerSide && buttonList[4].text == playerSide && buttonList[6].text == playerSide)
-            return 7; // Diagonal top-right to bottom-left
-
-        return -1; // No win
-    }
-
-    int Minimax(TextMeshProUGUI[] newBoard, int depth, bool isMaximizing)
-    {
-        int score = EvaluateBoard();
-
-        if (score == 10) return score - depth;
-        if (score == -10) return score + depth;
-        if (!IsMovesLeft(newBoard)) return 0;
-
-        if (isMaximizing)
+        if (bestMove < 0 || bestMove > 8 || cells[bestMove] != "")
         {
-            int best = -1000;
-            for (int i = 0; i < newBoard.Length; i++)
+            for (int i = 0; i < 9; i++)
             {
-                if (newBoard[i].text == "")
-                {
-                    newBoard[i].text = "O";
-                    best = Mathf.Max(best, Minimax(newBoard, depth + 1, false));
-                    newBoard[i].text = "";
-                }
-            }
-            return best;
-        }
-        else
-        {
-            int best = 1000;
-            for (int i = 0; i < newBoard.Length; i++)
-            {
-                if (newBoard[i].text == "")
-                {
-                    newBoard[i].text = "X";
-                    best = Mathf.Min(best, Minimax(newBoard, depth + 1, true));
-                    newBoard[i].text = "";
-                }
-            }
-            return best;
-        }
-    }
-
-    int EvaluateBoard()
-    {
-        for (int row = 0; row < 3; row++)
-        {
-            if (buttonList[row * 3].text == buttonList[row * 3 + 1].text &&
-                buttonList[row * 3 + 1].text == buttonList[row * 3 + 2].text)
-            {
-                if (buttonList[row * 3].text == "O") return 10;
-                if (buttonList[row * 3].text == "X") return -10;
+                if (cells[i] == "") { bestMove = i; break; }
             }
         }
 
-        for (int col = 0; col < 3; col++)
+        cells[bestMove] = "O";
+        buttonList[bestMove].text = "O";
+        buttonList[bestMove].GetComponentInParent<Button>().interactable = false;
+        PlaySound(moveSound);
+
+        int winLine = GetWinningLine();
+        if (winLine != -1)
         {
-            if (buttonList[col].text == buttonList[col + 3].text &&
-                buttonList[col + 3].text == buttonList[col + 6].text)
-            {
-                if (buttonList[col].text == "O") return 10;
-                if (buttonList[col].text == "X") return -10;
-            }
+            GameOver(winLine);
+            yield break;
         }
 
-        if (buttonList[0].text == buttonList[4].text && buttonList[4].text == buttonList[8].text)
+        if (IsDraw())
         {
-            if (buttonList[0].text == "O") return 10;
-            if (buttonList[0].text == "X") return -10;
+            ShowDraw();
+            yield break;
         }
 
-        if (buttonList[2].text == buttonList[4].text && buttonList[4].text == buttonList[6].text)
-        {
-            if (buttonList[2].text == "O") return 10;
-            if (buttonList[2].text == "X") return -10;
-        }
+        currentPlayer = "X";
+        title.text = "Player X Turn";
 
-        return 0;
+        for (int i = 0; i < 9; i++)
+            if (cells[i] == "") buttonList[i].GetComponentInParent<Button>().interactable = true;
     }
 
-    bool IsMovesLeft(TextMeshProUGUI[] newBoard)
+    int GetWinningLine()
     {
-        for (int i = 0; i < newBoard.Length; i++)
-        {
-            if (newBoard[i].text == "") return true;
-        }
-        return false;
+        foreach (int[] line in WinLines)
+            if (cells[line[0]] != "" && cells[line[0]] == cells[line[1]] && cells[line[1]] == cells[line[2]])
+                return System.Array.IndexOf(WinLines, line);
+        return -1;
     }
 
-    int GetBestMove()
+    bool IsDraw()
     {
-        int bestVal = -1000;
-        int bestMove = -1;
-
-        for (int i = 0; i < buttonList.Length; i++)
-        {
-            if (buttonList[i].text == "")
-            {
-                buttonList[i].text = "O"; 
-                int moveVal = Minimax(buttonList, 0, false); 
-                buttonList[i].text = ""; 
-
-                if (moveVal > bestVal)
-                {
-                    bestMove = i;
-                    bestVal = moveVal;
-                }
-            }
-        }
-        return bestMove;
+        foreach (string c in cells) if (c == "") return false;
+        return true;
     }
 
-    void GameOver(int winningCombination)
+    void GameOver(int winLine)
     {
-        for (int i = 0; i < buttonList.Length; i++)
-        {
-            buttonList[i].GetComponentInParent<Button>().interactable = false;
-        }
-        title.text = "Player " + playerSide + " Wins!";
+        gameOver = true;
+        SetAllButtonsInteractable(false);
+        title.text = "Player " + currentPlayer + " Wins!";
         restartButton.SetActive(true);
-
-        ShowStrikeThrough(winningCombination);
+        PlaySound(winSound);
+        ShowStrikeThrough(winLine);
     }
 
-    void ShowStrikeThrough(int winningCombination)
+    void ShowDraw()
     {
-        if (strikeThroughs.Length > winningCombination && strikeThroughs[winningCombination] != null)
-        {
-            strikeThroughs[winningCombination].SetActive(true);
-        }
-    }
-
-    void DisableAllStrikeThroughs()
-    {
-        foreach (GameObject strikeThrough in strikeThroughs)
-        {
-            if (strikeThrough != null)
-            {
-                strikeThrough.SetActive(false);
-            }
-        }
+        gameOver = true;
+        title.text = "It is a Draw";
+        restartButton.SetActive(true);
     }
 
     public void RestartGame()
     {
+        gameOver = false;
+        currentPlayer = "X";
+        aiStrategy = GetStrategy(GameSettings.AIDifficulty);
+        ResetCells();
         restartButton.SetActive(false);
-        playerSide = "X";
-        moveCount = 0;
-        title.text = "Player " + playerSide + " Turn";
-        computerTurn = false;
-
+        title.text = "Player X Turn";
         for (int i = 0; i < buttonList.Length; i++)
         {
-            buttonList[i].GetComponentInParent<Button>().interactable = true;
             buttonList[i].text = "";
+            buttonList[i].GetComponentInParent<Button>().interactable = true;
         }
-
         DisableAllStrikeThroughs();
     }
+
+    void SetAllButtonsInteractable(bool state)
+    {
+        for (int i = 0; i < buttonList.Length; i++)
+            buttonList[i].GetComponentInParent<Button>().interactable = state;
+    }
+
+    void PlaySound(AudioClip clip)
+    {
+        if (GameSettings.SoundEnabled && clip != null)
+            audioSource.PlayOneShot(clip);
+    }
+
+    public void PlayMoveSound() => PlaySound(moveSound);
+
+    void ShowStrikeThrough(int index)
+    {
+        if (strikeThroughs.Length > index && strikeThroughs[index] != null)
+            strikeThroughs[index].SetActive(true);
+    }
+
+    void DisableAllStrikeThroughs()
+    {
+        foreach (GameObject s in strikeThroughs)
+            if (s != null) s.SetActive(false);
+    }
+
+    public void GoBack() => SceneManager.LoadScene("MainMenu");
 }
